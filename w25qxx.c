@@ -95,7 +95,8 @@ static void w25qxx_wait(w25qxx_t *w25qxx)
 
 
 
-static void w25qxx_page_program(w25qxx_t *w25qxx, uint32_t addr, uint8_t *data, uint32_t size)
+static void w25qxx_page_program(w25qxx_t *w25qxx, uint32_t addr, 
+    uint8_t *data, uint32_t size)
 {
 	w25qxx_write_enable(w25qxx);
 	
@@ -110,7 +111,8 @@ static void w25qxx_page_program(w25qxx_t *w25qxx, uint32_t addr, uint8_t *data, 
 	w25qxx_wait(w25qxx);
 }
 
-uint32_t w25qxx_write(w25qxx_t *w25qxx, uint32_t addr, uint8_t *data, uint32_t size)
+uint32_t w25qxx_write(w25qxx_t *w25qxx, uint32_t addr, 
+    uint8_t *data, uint32_t size)
 {
 	uint32_t pwc;
 	uint32_t _size = size;
@@ -131,7 +133,8 @@ uint32_t w25qxx_write(w25qxx_t *w25qxx, uint32_t addr, uint8_t *data, uint32_t s
 	return _size;
 }
 
-uint32_t w25qxx_read(w25qxx_t *w25qxx, uint32_t addr, uint8_t *buff, uint32_t size)
+uint32_t w25qxx_read(w25qxx_t *w25qxx, uint32_t addr, 
+    uint8_t *buff, uint32_t size)
 {	
 	addr %= w25qxx->capacity;
 	
