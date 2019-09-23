@@ -13,9 +13,7 @@
 #include <lib/delay.h>
 
 
-// -----------------------------------------------------------------------------
-// debug
-// -----------------------------------------------------------------------------
+//# Debug
 //#define DEBUG
 #ifdef DEBUG
   #include <lib/uart_printf.h>
@@ -25,22 +23,16 @@
 #endif
 
 
-/** 
-  * @brief  SDIO Intialization Frequency (400KHz max)
-  */
-#define SDIO_INIT_CLK_DIV                   ((uint8_t)0xB2)
-/** 
-  * @brief  SDIO Data Transfer Frequency (25MHz max) 
-  */
-#define SDIO_TRANSFER_CLK_DIV               ((uint8_t)0x01) // 72M/(4+2)=12M
+//#
+#define SDIO_INIT_CLK_DIV                   ((uint8_t)0xB2) // 400K
+#define SDIO_TRANSFER_CLK_DIV               ((uint8_t)0x01) // 72M/(1+2)=24M
 //
 #define SDIO_STATIC_FLAGS                   ((uint32_t)0x000005FF)
 #define SD_DATATIMEOUT                      ((uint32_t)0xFFFFFFFF)
 #define SDIO_FIFO_ADDRESS                   ((uint32_t)0x40018080)
 
 
-
-
+//#
 void sdio_init(void)
 {
     GPIO_InitTypeDef  GPIO_InitStructure;
@@ -89,7 +81,6 @@ void sdio_init(void)
     // Enable SDIO Clock
     SDIO_ClockCmd(ENABLE);
 }
-
 
 static uint32_t resp_type(uint8_t cmd)
 {
@@ -204,39 +195,10 @@ static int ask(struct sdxx *sdxx,
     return SDXX_OK;
 }
 
-
-
-
-
-
-
-
-// -----------------------------------------------------------------------------
-// DMA rx
-static sdxx_t *sdxx;
-#if 0
-void DMA2_Channel4_5_IRQHandler(void)
-{
-    if (DMA_GetITStatus(DMA2_IT_TC4)) {
-        //sdxx->rx_complete = 1;
-        //sdxx->tx_complete = 1;
-        DMA_ClearITPendingBit(DMA2_IT_TC4);
-    }
-}
-#endif
-void SDIO_IRQHandler(void)
-{
-    sdxx->rx_complete = 1;
-    sdxx->tx_complete = 1;
-    SDIO_ClearITPendingBit(SDIO_IT_DATAEND);
-    SDIO_ITConfig(SDIO_IT_DATAEND, DISABLE);
-}
-
 static void SD_LowLevel_DMA_RxConfig(uint32_t *BufferDST, uint32_t BufferSize)
 {
     DMA_InitTypeDef DMA_InitStructure;
-    NVIC_InitTypeDef NVIC_InitStructure; 
-    
+
 
     RCC_AHBPeriphClockCmd(RCC_AHBPeriph_DMA2, ENABLE); 
     
@@ -259,25 +221,14 @@ static void SD_LowLevel_DMA_RxConfig(uint32_t *BufferDST, uint32_t BufferSize)
     DMA_InitStructure.DMA_Priority = DMA_Priority_High;
     DMA_InitStructure.DMA_M2M = DMA_M2M_Disable;
     DMA_Init(DMA2_Channel4, &DMA_InitStructure);
-    
-    /*NVIC_InitStructure.NVIC_IRQChannel = DMA2_Channel4_5_IRQn; 
-    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE; 
-    NVIC_Init(&NVIC_InitStructure);*/
-    NVIC_InitStructure.NVIC_IRQChannel = SDIO_IRQn; 
-    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE; 
-    NVIC_Init(&NVIC_InitStructure);    
-
 
     /*!< DMA2 Channel4 enable */
     DMA_Cmd(DMA2_Channel4, ENABLE);
-    //DMA_ITConfig(DMA2_Channel4, DMA_IT_TC,ENABLE);
-    SDIO_ITConfig(SDIO_IT_DATAEND, ENABLE);
 }
 
 static void SD_LowLevel_DMA_TxConfig(uint32_t *BufferSRC, uint32_t BufferSize)
 {
     DMA_InitTypeDef DMA_InitStructure;
-    NVIC_InitTypeDef NVIC_InitStructure; 
 
 
     RCC_AHBPeriphClockCmd(RCC_AHBPeriph_DMA2, ENABLE); 
@@ -301,27 +252,16 @@ static void SD_LowLevel_DMA_TxConfig(uint32_t *BufferSRC, uint32_t BufferSize)
     DMA_InitStructure.DMA_Priority = DMA_Priority_High;
     DMA_InitStructure.DMA_M2M = DMA_M2M_Disable;
     DMA_Init(DMA2_Channel4, &DMA_InitStructure);
-
-	/*NVIC_InitStructure.NVIC_IRQChannel = DMA2_Channel4_5_IRQn; 
-    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE; 
-    NVIC_Init(&NVIC_InitStructure);  */
-    NVIC_InitStructure.NVIC_IRQChannel = SDIO_IRQn; 
-    NVIC_InitStructure.NVIC_IRQChannelCmd = ENABLE; 
-    NVIC_Init(&NVIC_InitStructure); 
 	
     /*!< DMA2 Channel4 enable */
     DMA_Cmd(DMA2_Channel4, ENABLE);
-    /*DMA_ITConfig(DMA2_Channel4, DMA_IT_TC,ENABLE);*/
-    SDIO_ITConfig(SDIO_IT_DATAEND, ENABLE);
 }
 
-void recv(sdxx_t *_sdxx, uint8_t *buff, uint64_t size)
+static void recv(sdxx_t *_sdxx, uint8_t *buff, uint64_t size)
 {
     SDIO_DataInitTypeDef SDIO_DataInitStructure;
     int blk_sz;
 
-
-    sdxx = _sdxx;
 
     if (size == 8) {
         blk_sz = 3;
@@ -338,19 +278,14 @@ void recv(sdxx_t *_sdxx, uint8_t *buff, uint64_t size)
     SDIO_DataInitStructure.SDIO_TransferMode = SDIO_TransferMode_Block;
     SDIO_DataInitStructure.SDIO_DPSM = SDIO_DPSM_Enable;
     SDIO_DataConfig(&SDIO_DataInitStructure);
-	//SDIO_ClearFlag(SDIO_FLAG_DATAEND|SDIO_FLAG_DBCKEND);
-    sdxx->rx_complete = 0;
-
-    //SDIO_ITConfig(SDIO_IT_DATAEND, ENABLE);
 
     SDIO_DMACmd(ENABLE);
     SD_LowLevel_DMA_RxConfig((uint32_t *)buff, size);
 }
 
-void send(sdxx_t *_sdxx, uint8_t *buff, uint64_t size)
+static void send(sdxx_t *_sdxx, uint8_t *buff, uint64_t size)
 {
 	SDIO_DataInitTypeDef SDIO_DataInitStructure;
-    sdxx = _sdxx;
 	
 
     SDIO_DataInitStructure.SDIO_DataTimeOut = SD_DATATIMEOUT;
@@ -360,13 +295,18 @@ void send(sdxx_t *_sdxx, uint8_t *buff, uint64_t size)
     SDIO_DataInitStructure.SDIO_TransferMode = SDIO_TransferMode_Block;
     SDIO_DataInitStructure.SDIO_DPSM = SDIO_DPSM_Enable;
     SDIO_DataConfig(&SDIO_DataInitStructure);
-	//SDIO_ClearFlag(SDIO_FLAG_DATAEND|SDIO_FLAG_DBCKEND);
-    sdxx->tx_complete = 0;
 
-    //SDIO_ITConfig(SDIO_IT_DATAEND, ENABLE);
-	//SDIO_DMACmd(DISABLE);
     SD_LowLevel_DMA_TxConfig((uint32_t *)buff, size);
     SDIO_DMACmd(ENABLE);
+}
+
+static int transfer_end(sdxx_t *sdxx)
+{
+    if (SDIO_GetFlagStatus(SDIO_FLAG_DATAEND) == SET) {
+        return SDXX_OK;
+    }
+
+    return SDXX_ERROR;
 }
 
 void sdxx_sdio_init(sdxx_t *sdxx)
@@ -376,6 +316,7 @@ void sdxx_sdio_init(sdxx_t *sdxx)
     sdxx->recv = recv;
     sdxx->send = send;
     sdxx->ask = ask;
+    sdxx->transfer_end = transfer_end;
 }
 
 /****************************** Copy right 2019 *******************************/

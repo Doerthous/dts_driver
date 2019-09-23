@@ -13,15 +13,13 @@
 #include <lib/delay.h>
 
 
-
-// -----------------------------------------------------------------------------
-// debug
-// -----------------------------------------------------------------------------
+//# Debug
 //#define DEBUG
 #ifdef DEBUG
   #include <lib/uart_printf.h>
+  #define COMMA ,
   #define PRINTF(...) uart_printf(&uart1, ##__VA_ARGS__)
-  static void DUMP_STATUS(sdxx_t *sdxx) 
+  static void __DUMP_STATUS(sdxx_t *sdxx, const char *func) 
   {
     int status;
     static const char *snm[] = { 
@@ -31,7 +29,7 @@
 
     int sdxx_get_status(sdxx_t *sdxx, uint32_t *status);
     sdxx_get_status(sdxx, (uint32_t *)&status);
-    PRINTF("status: %08X, ", status);
+    PRINTF("%s status: %08X, ", func, status);
     status >>= 9;
     status &= 0x0F;
     if (status < 9) {
@@ -53,15 +51,17 @@
     PRINTF("scr ex_security: %d\n", scr->ex_security); 
     PRINTF("scr cmd_support: %d\n", scr->cmd_support);
   }
+  #define DUMP_STATUS(sdxx) __DUMP_STATUS(sdxx, __func__)
 #else
-  #define PRINTF(...) (0)
+  #define COMMA
+  #define PRINTF(...)
   #define DUMP_STATUS(sdxx)
   #define DUMP_SCR(scr)
 #endif
 
 
-
-// ------------------------------- Command -------------------------------------
+//# Command
+//## Basic Command
 #define SDXX_CMD0_N_GO_IDLE_STATE                                           0
 #define SDXX_CMD2_R2_ALL_SEND_CID                                           2
 #define SDXX_CMD3_R6_SEND_RELATIVE_ADDR                                     3
@@ -75,16 +75,14 @@
 #define SDXX_CMD24_R1_WRITE_SINGLE_BLOCK                                    24
 #define SDXX_CMD25_R1_WRITE_MULTIPLE_BLOCK                                  25
 #define SDXX_CMD55_R1_APP_CMD                                               55
-// APP Commands
+//## APP Command
 #define SDXX_ACMD6_R1_SET_BUS_WIDTH                                         6
 #define SDXX_ACMD23_R1_SET_BLOCK_COUNT                                      23
 #define SDXX_ACMD41_R3_SD_SEND_OP_COND                                      41
 #define SDXX_ACMD51_R1_SEND_SCR                                             51
 
 
-
-
-// ------------------------------- Response ------------------------------------
+//# Response
 // start bit(sb), stop bit{pb), transmition bit(tb), command index(ci) and crc.
 // rv: reserve
 // va: voltage accepted
@@ -103,23 +101,31 @@
 // |R6  |0  |0  |111111  |rca[16], csb[16]                      |111111  |1  |
 // |R7  |0  |0  |001000  |rv[20],va[4],cp[8]                    |xxxxxx  |1  |
 // +----+---+---+--------+--------------------------------------+--------+---+
-// 
+
+/**
+ * @brief      check the "return" of sdxx.ask and response "R1"
+ *
+ * @param      ret   the "return" of sdxx.ask
+ * @param      r1    R1
+ *
+ * @return     return ret if ret != SDXX_OK, else return SDXX_ERROR if R1 has
+ *             error, else return SDXX_OK
+ */
 #define r1_check(ret, r1) \
     (((ret) != SDXX_OK) ? \
-        (PRINTF("%s: ret: %d\n", __func__, (ret)), (ret)) : \
+        (PRINTF("%s: ret: %d\n", __func__, (ret))COMMA (ret)) : \
         (SDXX_CS_HAS_ERROR((r1)) ? \
-            (PRINTF("%s: resp: %08X\n", __func__, (r1)), SDXX_ERROR) : \
+            (PRINTF("%s: resp: %08X\n", __func__, (r1))COMMA SDXX_ERROR) : \
             SDXX_OK))
 
 
-
-
-// ------------------------------- Card status ---------------------------------
+//# Card Status
+//## Errors
 #define SDXX_CS_CMD_CRC_ERROR                                          (1 << 23)
 #define SDXX_CS_HAS_ERROR(status) ((status)&0xFDFFE008)
-//
+//## Misc
 #define SDXX_CS_RDY_FOR_DAT                                             (1 << 8)
-//
+//## States
 #define SDXX_CS_IDLE                                                           0
 #define SDXX_CS_READY                                                          1
 #define SDXX_CS_IDENT                                                          2
@@ -132,8 +138,7 @@
 #define SDXX_CS_CUR_STA(status) (((status)&(0x0F << 9))>>9)
 
 
-
-
+//# Command Util
 static int sdxx_get_status(sdxx_t *sdxx, uint32_t *status)
 {
     return sdxx->ask(sdxx, 
@@ -159,6 +164,60 @@ static int sdxx_send_app_command(sdxx_t *sdxx,
     return sdxx->ask(sdxx, cmd, arg, resp, size);
 }
 
+static int sdxx_set_bus_width(sdxx_t *sdxx, int width)
+{
+    uint32_t resp;
+    int ret;
+
+
+    if (width == 1) {
+        width = 0x00;
+    }
+    else if (width == 4) {
+        width = 0x02;
+    }
+    else {
+        return SDXX_INVALID_ARG;
+    }
+
+    ret = sdxx_send_app_command(sdxx, 
+        SDXX_ACMD6_R1_SET_BUS_WIDTH, width, 
+        (uint8_t *)&resp, 4);
+
+    return r1_check(ret, resp);
+}
+
+static int sdxx_get_scr(sdxx_t *sdxx, uint8_t *scr)
+{
+    uint32_t resp;
+    int ret;
+
+
+    sdxx->recv(sdxx, scr, 8);
+
+    ret = sdxx_send_app_command(sdxx, SDXX_ACMD51_R1_SEND_SCR, 0, 
+        (uint8_t *)&resp, 4);
+    
+    ret = r1_check(ret, resp);
+    if (ret != SDXX_OK) {    
+        return ret;
+    }
+
+    ret = 3;
+    while (sdxx->transfer_end(sdxx) != SDXX_OK) {
+        DUMP_STATUS(sdxx);
+        delay_us(250);
+        ret -= 1;
+        if (ret == 0) {
+            return SDXX_ERROR;
+        }
+    }
+
+    return SDXX_OK;    
+}
+
+
+//# Initialize and Identify
 static int sdxx_initialize(sdxx_t *sdxx)
 {
     uint32_t resp;
@@ -253,84 +312,61 @@ static int sdxx_identify(sdxx_t *sdxx)
     return ret;
 }
 
-static int sdxx_set_bus_width(sdxx_t *sdxx, int width)
+
+//# Data Transter
+/**
+ * @brief      move card's state move to "tran".
+ *
+ * @param      sdxx     sdxx
+ * @param[in]  timeout  timeout, ms
+ *
+ * @return     SDXX_OK when successed, else SDXX_ERROR
+ */
+static int sdxx_move_to_tran(sdxx_t *sdxx, int timeout)
 {
-    uint32_t resp;
-    int ret;
+    uint32_t state, resp;
 
 
-    if (width == 1) {
-        width = 0x00;
-    }
-    else if (width == 4) {
-        width = 0x02;
-    }
-    else {
-        return SDXX_INVALID_ARG;
-    }
-
-    ret = sdxx_send_app_command(sdxx, 
-        SDXX_ACMD6_R1_SET_BUS_WIDTH, width, 
-        (uint8_t *)&resp, 4);
-
-    return r1_check(ret, resp);
-}
-
-static int sdxx_get_scr(sdxx_t *sdxx, uint8_t *scr)
-{
-    uint32_t resp;
-    int ret;
-
-
-    sdxx->recv(sdxx, scr, 8);
-
-    ret = sdxx_send_app_command(sdxx, SDXX_ACMD51_R1_SEND_SCR, 0, 
-        (uint8_t *)&resp, 4);
-    
-    ret = r1_check(ret, resp);
-    if (ret != SDXX_OK) {    
-        return ret;
-    }
-
-    ret = 3;
-    while (!sdxx->rx_complete) {
-        DUMP_STATUS(sdxx);
-        delay_us(250);
-        ret -= 1;
-        if (ret == 0) {
-            return SDXX_ERROR;
+    sdxx_get_status(sdxx, &state);
+    while ((SDXX_CS_CUR_STA(state) != SDXX_CS_TRAN) && timeout > 0) {
+        if ((SDXX_CS_CUR_STA(state) == SDXX_CS_RCV)
+        || (SDXX_CS_CUR_STA(state) == SDXX_CS_DATA)) {
+            sdxx->ask(sdxx, 
+                SDXX_CMD12_R1_STOP_TRANSTER, 0,
+                (uint8_t *)&resp, 4);
         }
-    }
+        else if (SDXX_CS_CUR_STA(state) == SDXX_CS_STBY) {
+            sdxx_select(sdxx);
+        }
 
-    return SDXX_OK;    
-}
-
-
-// -----------------------------------------------------------------------------
-// data transter
-#define SDXX_READ_MULTI_ITER
-#define SDXX_WRITE_MULTI_ITER
-
-static int sdxx_wait_state(sdxx_t *sdxx, int state, int timeout_ms)
-{
-    uint32_t status = 0;
-
-
-    while ((SDXX_CS_CUR_STA(status) != state) && timeout_ms > 0) {
-        sdxx_get_status(sdxx, &status);
-        timeout_ms -= 1;
+		timeout -= 1;
         delay_ms(1);
+        sdxx_get_status(sdxx, &state);
     }
 
-    return timeout_ms > 0 ? SDXX_OK : SDXX_ERROR;
+    DUMP_STATUS(sdxx);
+    return timeout > 0 ? SDXX_OK : SDXX_ERROR;    
 }
 
+/**
+ * @brief      read single block using CMD17
+ *
+ * @param      sdxx  sdxx
+ * @param[in]  idx   block index, [0, max]
+ * @param      buff  buff
+ *
+ * @return     the number of blocks read
+ */
 static uint32_t sdxx_read_single_block(sdxx_t *sdxx,
     uint32_t idx, uint8_t *buff)
 {
     uint32_t resp;
     int ret;
 
+
+    if (sdxx_move_to_tran(sdxx, 500) != SDXX_OK) {
+        return 0;
+    }
 
     sdxx->recv(sdxx, buff, sdxx->block_size);
     ret = sdxx->ask(sdxx, 
@@ -340,17 +376,30 @@ static uint32_t sdxx_read_single_block(sdxx_t *sdxx,
         PRINTF("%s: ret: %d resp: %08X\n", __func__, ret, resp);
         return 0;
     }
-    while (!sdxx->rx_complete);
+    while (sdxx->transfer_end(sdxx) != SDXX_OK);
 
     return 1;
 }
 
+/**
+ * @brief      write single block using COM24
+ *
+ * @param      sdxx  sdxx
+ * @param[in]  idx   block index, [0, max]
+ * @param      data  data
+ *
+ * @return     the number of blocks written
+ */
 static uint32_t sdxx_write_single_block(sdxx_t *sdxx,
     uint32_t idx, uint8_t *data)
 {
     uint32_t resp;
     int ret;
 
+
+    if (sdxx_move_to_tran(sdxx, 500) != SDXX_OK) {
+        return 0;
+    }
 
     ret = sdxx->ask(sdxx, 
         SDXX_CMD24_R1_WRITE_SINGLE_BLOCK, idx,
@@ -360,11 +409,21 @@ static uint32_t sdxx_write_single_block(sdxx_t *sdxx,
         return 0;
     }
     sdxx->send(sdxx, data, sdxx->block_size);
-    while (!sdxx->tx_complete);
+    while (sdxx->transfer_end(sdxx) != SDXX_OK);
 
     return 1;
 }
 
+/**
+ * @brief      read multi block using sdxx_read_single_block
+ *
+ * @param      sdxx  sdxx
+ * @param[in]  idx   block index, [0, max]
+ * @param[in]  cnt   the number of blocks need to read from card
+ * @param      buff  buff
+ *
+ * @return     the number of blocks read
+ */
 static uint32_t sdxx_read_multi_block_iter(sdxx_t *sdxx, 
     uint32_t idx, uint32_t cnt, uint8_t *buff)
 {
@@ -372,12 +431,10 @@ static uint32_t sdxx_read_multi_block_iter(sdxx_t *sdxx,
 
 
     for (i = 0; i < cnt; ++i) {
-        if (sdxx_wait_state(sdxx, SDXX_CS_TRAN, 500) != SDXX_OK) {
-            break;
-        }
         if (!sdxx_read_single_block(sdxx, idx, buff)) {
             return i;
         }
+
         idx += 1;
         buff += sdxx->block_size;
     }
@@ -385,6 +442,16 @@ static uint32_t sdxx_read_multi_block_iter(sdxx_t *sdxx,
     return i;    
 }
 
+/**
+ * @brief      write multi block using sdxx_write_single_block
+ *
+ * @param      sdxx  sdxx
+ * @param[in]  idx   block index, [0, max]
+ * @param[in]  cnt   the number of blocks need to write to card
+ * @param      data  data
+ *
+ * @return     the number of blocks written
+ */
 static uint32_t sdxx_write_multi_block_iter(sdxx_t *sdxx,
     uint32_t idx, uint32_t cnt, uint8_t *data)
 {
@@ -392,10 +459,6 @@ static uint32_t sdxx_write_multi_block_iter(sdxx_t *sdxx,
     
 
     for (i = 0; i < cnt; ++i) {
-        if (sdxx_wait_state(sdxx, SDXX_CS_TRAN, 500) != SDXX_OK) {
-            break;
-        }
-
         if (!sdxx_write_single_block(sdxx, idx, data)) {
             break;
         }
@@ -407,96 +470,83 @@ static uint32_t sdxx_write_multi_block_iter(sdxx_t *sdxx,
     return i;
 }
 
-#if 0 // no pass
-    static void sdxx_wait_ready_for_data(sdxx_t *sdxx)
-    {
-        uint32_t status = 0;
+/**
+ * @brief      read multi block using CMD18
+ *
+ * @param      sdxx  sdxx
+ * @param[in]  idx   block index, [0, max]
+ * @param[in]  cnt   the number of blocks need to read from card
+ * @param      buff  buff
+ *
+ * @return     the number of blocks read
+ */
+static uint32_t sdxx_read_multi_block(sdxx_t *sdxx,
+    uint32_t idx, uint32_t cnt, uint8_t *buff)
+{
+    uint32_t resp;
+    int ret;
 
-
-        while (status & SDXX_CS_RDY_FOR_DAT) {
-            sdxx_get_status(sdxx, &status);
-            //PRINTF("%s: %08X\n", __func__, status);
-        }
+    if (sdxx_move_to_tran(sdxx, 500) != SDXX_OK) {
+        return 0;
     }
 
-    static void sdxx_stop_transter(sdxx_t *sdxx)
-    {
-        uint32_t resp, status;
+    sdxx->recv(sdxx, buff, sdxx->block_size * cnt);    
+    ret = sdxx->ask(sdxx, 
+        SDXX_CMD18_R1_READ_MULTIPLE_BLOCK, idx,
+        (uint8_t *)&resp, 4);
+    if (ret != SDXX_OK) {
+        PRINTF("%s: ret: %d resp: %08X\n", __func__, ret, resp);
+        return 0;
+    }
+    while (sdxx->transfer_end(sdxx) != SDXX_OK);
+    
+    return cnt;
+}
+
+/**
+ * @brief      write multi block using CMD25
+ *
+ * @param      sdxx  sdxx
+ * @param[in]  idx   block index, [0, max]
+ * @param[in]  cnt   the number of blocks need to write to card
+ * @param      data  data
+ *
+ * @return     the number of blocks written
+ *
+ * @note       will card be busy if we send a large amount of data to it?
+ */
+static uint32_t sdxx_write_multi_block(sdxx_t *sdxx,
+    uint32_t idx, uint32_t cnt, uint8_t *data)
+{
+    uint32_t resp;
+    int ret;
 
 
-        sdxx_get_status(sdxx, &status);
-        while ((SDXX_CS_CUR_STA(status) == SDXX_CS_RCV)
-            || (SDXX_CS_CUR_STA(status) == SDXX_CS_DATA)) {
-            sdxx->ask(sdxx, 
-                SDXX_CMD12_R1_STOP_TRANSTER, 0,
-                (uint8_t *)&resp, 4);
-            sdxx_get_status(sdxx, &status);
-        }
-
-        sdxx_wait_state(sdxx, SDXX_CS_TRAN);
+    if (sdxx_move_to_tran(sdxx, 500) != SDXX_OK) {
+        return 0;
     }
 
-    static uint32_t sdxx_read_multi_block(sdxx_t *sdxx,
-        uint32_t idx, uint32_t cnt, uint8_t *buff)
-    {
-        uint32_t resp;
-        int ret, i;
+    // use this pre-erase command before CMD25 could improve performance.
+    sdxx_send_app_command(sdxx,
+        SDXX_ACMD23_R1_SET_BLOCK_COUNT, cnt,
+        (uint8_t *)&resp, 4);
 
-
-        //
-        sdxx->recv(sdxx, buff, sdxx->block_size * cnt);    
-        ret = sdxx->ask(sdxx, 
-            SDXX_CMD18_R1_READ_MULTIPLE_BLOCK, idx,
-            (uint8_t *)&resp, 4);
-        if (ret != SDXX_OK) {
-            PRINTF("%s: ret: %d resp: %08X\n", __func__, ret, resp);
-            return 0;
-        }
-        while (!sdxx->rx_complete);
-
-        sdxx_stop_transter(sdxx);
-        
-        return cnt;
+    //
+    ret = sdxx->ask(sdxx, 
+        SDXX_CMD25_R1_WRITE_MULTIPLE_BLOCK, idx,
+        (uint8_t *)&resp, 4);
+    if (ret != SDXX_OK) {
+        PRINTF("%s: ret: %d resp: %08X\n", __func__, ret, resp);
+        return 0;
     }
-
-    static uint32_t sdxx_write_multi_block(sdxx_t *sdxx,
-        uint32_t idx, uint32_t cnt, uint8_t *data)
-    {
-        uint32_t resp;
-        int ret, i;
-
-
-        // use this before CMD25 could improve performance.
-        sdxx_send_app_command(sdxx,
-            SDXX_ACMD23_R1_SET_BLOCK_COUNT, cnt,
-            (uint8_t *)&resp, 4);
-
-        //
-        ret = sdxx->ask(sdxx, 
-            SDXX_CMD25_R1_WRITE_MULTIPLE_BLOCK, idx,
-            (uint8_t *)&resp, 4);
-        if (ret != SDXX_OK) {
-            PRINTF("%s: ret: %d resp: %08X\n", __func__, ret, resp);
-            return 0;
-        }
-
-        for (i = 0; i < cnt; ++i) {
-            DUMP_STATUS(sdxx);
-            sdxx->send(sdxx, data, sdxx->block_size);
-            while (!sdxx->tx_complete);
-            data += sdxx->block_size;
-            sdxx_wait_ready_for_data(sdxx);
-        }
-        sdxx_stop_transter(sdxx);
-        sdxx_wait_state(sdxx, SDXX_CS_TRAN);
-        
-        return cnt;
-    }
-#endif
+    sdxx->send(sdxx, data, sdxx->block_size * cnt);
+    while (sdxx->transfer_end(sdxx) != SDXX_OK);
+    
+    return cnt;
+}
 
 
-// -----------------------------------------------------------------------------
-// basic interfaces
+//# Basic Interface
 int sdxx_init(sdxx_t *sdxx)
 {
     int ret;
@@ -504,12 +554,15 @@ int sdxx_init(sdxx_t *sdxx)
     #define SD_WIDE_BUS 0x04  
 
 
+    //
     sdxx->md_init(sdxx);
     
+    //
     if ((ret = sdxx_initialize(sdxx)) != SDXX_OK) {
         return ret;
     }
 
+    //
     if ((ret = sdxx_identify(sdxx)) != SDXX_OK) {
         return ret;
     }
@@ -528,7 +581,7 @@ int sdxx_init(sdxx_t *sdxx)
     sdxx_get_info(sdxx, &info);
     DUMP_STATUS(sdxx);
 
-    // try to set to wide bus mode
+    /// try to set to wide bus mode
     if (info.scr.sd_bus_widths & SD_WIDE_BUS) {
         sdxx->bus_width = 4;
         if (sdxx->config(sdxx) == SDXX_OK) {
@@ -540,6 +593,10 @@ int sdxx_init(sdxx_t *sdxx)
         }
         DUMP_STATUS(sdxx);        
     }
+
+    /// set default read/write interface
+    sdxx->read_block = sdxx_read_multi_block_iter;
+    sdxx->write_block = sdxx_write_multi_block_iter;
 
     return SDXX_OK;
 }
@@ -560,26 +617,17 @@ int sdxx_select(sdxx_t *sdxx)
 uint32_t sdxx_read_block(sdxx_t *sdxx, 
     uint32_t idx, uint32_t cnt, uint8_t *buff)
 {
-  #ifdef SDXX_READ_MULTI_ITER
-    return sdxx_read_multi_block_iter(sdxx, idx, cnt, buff);
-  #else
-    return sdxx_read_multi_block(sdxx, idx, cnt, buff);
-  #endif 
+    return sdxx->read_block(sdxx, idx, cnt, buff);
 }
 
 uint32_t sdxx_write_block(sdxx_t *sdxx,
     uint32_t idx, uint32_t cnt, uint8_t *data)
 {
-  #ifdef SDXX_WRITE_MULTI_ITER
-    return sdxx_write_multi_block_iter(sdxx, idx, cnt, data);
-  #else
-    return sdxx_write_multi_block(sdxx, idx, cnt, data);
-  #endif
+    return sdxx->write_block(sdxx, idx, cnt, data);
 }
 
 
-// -----------------------------------------------------------------------------
-// extend interfaces
+//# Extend Interface
 #include <string.h>
 int sdxx_get_info(sdxx_t *sdxx, sdxx_info_t *info)
 {
@@ -643,4 +691,48 @@ int sdxx_get_info(sdxx_t *sdxx, sdxx_info_t *info)
     return SDXX_OK;
 }
 
+#include <stdarg.h>
+int sdxx_config(sdxx_t *sdxx, int cmd, ...)
+{
+    va_list args;
+    int ret = SDXX_ERROR;
+    
+    
+    va_start(args, cmd);
+
+    switch (cmd) {
+        case SDXX_CMD_RX_MODE:
+            switch (va_arg(args, int)) {
+                case SDXX_RX_DMA_SINGLE_BLK_ITER:
+                    sdxx->read_block = sdxx_read_multi_block_iter;
+                    ret = SDXX_OK;
+                    PRINTF("sdxx set rx to dma single block iter mode.\n");
+                    break;
+                case SDXX_RX_DMA_MULTI_BLK:
+                    sdxx->read_block = sdxx_read_multi_block;
+                    ret = SDXX_OK;
+                    PRINTF("sdxx set rx to dma multi block mode.\n");
+                    break;
+            }
+            break;
+
+        case SDXX_CMD_TX_MODE:
+            switch (va_arg(args, int)) {
+                case SDXX_TX_DMA_SINGLE_BLK_ITER:
+                    sdxx->write_block = sdxx_write_multi_block_iter;
+                    ret = SDXX_OK;
+                    PRINTF("sdxx set tx to dma single block iter mode.\n");
+                    break;
+                case SDXX_TX_DMA_MULTI_BLK:
+                    sdxx->write_block = sdxx_write_multi_block;
+                    ret = SDXX_OK;
+                    PRINTF("sdxx set tx to dma multi block mode.\n");
+                    break;
+            }
+            ret = SDXX_OK;
+            break;
+    }
+
+    return ret;
+}
 /****************************** Copy right 2019 *******************************/

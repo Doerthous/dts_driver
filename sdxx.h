@@ -44,6 +44,13 @@ typedef struct sdxx
     uint32_t cid[4];
     uint32_t csd[4];
 
+    // interfaces
+    uint32_t (*read_block)(struct sdxx *sdxx, 
+        uint32_t idx, uint32_t cnt, uint8_t *data);
+    uint32_t (*write_block)(struct sdxx *sdxx, 
+        uint32_t idx, uint32_t cnt, uint8_t *data);
+
+    //
     void (*md_init)(struct sdxx *sdxx);
     int (*config)(struct sdxx *sdxx);
 
@@ -52,8 +59,7 @@ typedef struct sdxx
 
     void (*recv)(struct sdxx *sdxx, uint8_t *buff, uint64_t size);
     void (*send)(struct sdxx *sdxx, uint8_t *data, uint64_t size);
-    uint8_t rx_complete: 1;
-    uint8_t tx_complete: 1;
+    int (*transfer_end)(struct sdxx* sdxx); // int check(sdxx, flag)
 } sdxx_t;
 
 int sdxx_init(sdxx_t *sdxx);
@@ -120,8 +126,32 @@ typedef struct sdxx_info
     sdxx_scr_t scr;
 } sdxx_info_t;
 
-
 int sdxx_get_info(sdxx_t *sdxx, sdxx_info_t *info);
+
+
+
+enum SDXX_RX_MODE
+{
+    SDXX_RX_DMA_SINGLE_BLK_ITER,
+    SDXX_RX_DMA_MULTI_BLK,
+};
+
+enum SDXX_TX_MODE
+{
+    SDXX_TX_DMA_SINGLE_BLK_ITER,
+    SDXX_TX_DMA_MULTI_BLK,
+};
+
+enum SDXX_CMD
+{
+    // (enum SDXX_RX_MODE)
+    SDXX_CMD_RX_MODE,
+    
+    // (enum SDXX_TX_MODE)
+    SDXX_CMD_TX_MODE,
+};
+
+int sdxx_config(sdxx_t *sdxx, int cmd, ...);
 
 #endif /* SDXX_H_ */
 
